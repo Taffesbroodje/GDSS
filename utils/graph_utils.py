@@ -111,7 +111,7 @@ def adjs_to_graphs(adjs, is_cuda=False):
     for adj in adjs:
         if is_cuda:
             adj = adj.detach().cpu().numpy()
-        G = nx.from_numpy_matrix(adj)
+        G = nx.from_numpy_array(adj)
         G.remove_edges_from(nx.selfloop_edges(G))
         G.remove_nodes_from(list(nx.isolates(G)))
         if G.number_of_nodes() < 1:
@@ -165,7 +165,7 @@ def graphs_to_tensor(graph_list, max_node_num):
         for v, feature in g.nodes.data('feature'):
             node_list.append(v)
 
-        adj = nx.to_numpy_matrix(g, nodelist=node_list)
+        adj = nx.to_numpy_array(g, nodelist=node_list)
         padded_adj = pad_adjs(adj, node_number=max_node_num)
         adjs_list.append(padded_adj)
 
@@ -188,7 +188,7 @@ def graphs_to_adj(graph, max_node_num):
     for v, feature in graph.nodes.data('feature'):
         node_list.append(v)
 
-    adj = nx.to_numpy_matrix(graph, nodelist=node_list)
+    adj = nx.to_numpy_array(graph, nodelist=node_list)
     padded_adj = pad_adjs(adj, node_number=max_node_num)
 
     adj = torch.tensor(padded_adj, dtype=torch.float32)

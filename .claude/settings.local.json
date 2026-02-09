@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(conda env create:*)",
+      "Bash(/opt/homebrew/bin/conda env create:*)",
+      "Bash(/opt/homebrew/Caskroom/miniforge/base/envs/gdss/bin/python:*)",
+      "Bash(/opt/homebrew/Caskroom/miniforge/base/envs/gdss/bin/pip install:*)",
+      "Bash(/opt/homebrew/bin/conda install:*)",
+      "WebSearch",
+      "WebFetch(domain:arxiv.org)",
+      "WebFetch(domain:pypi.org)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:ar5iv.labs.arxiv.org)",
+      "WebFetch(domain:proceedings.mlr.press)",
+      "Bash(python data/preprocess.py:*)",
+      "Bash(python:*)"
+    ]
+  }
+}
