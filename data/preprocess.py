@@ -33,7 +33,7 @@ else:
 preprocessor = GGNNPreprocessor(out_size=max_atoms, kekulize=True)
 
 print(f'Preprocessing {data_name} data')
-df = pd.read_csv(path, index_col=0)
+df = pd.read_csv(path)
 # Caution: Not reasonable but used in chain_chemistry\datasets\zinc.py:
 # 'smiles' column contains '\n', need to remove it.
 # Here we do not remove \n, because it represents atom N with single bond

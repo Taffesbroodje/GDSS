@@ -12,7 +12,9 @@ toy/samples/
 data/zinc250k_test_nx.pkl
 *.npz
 checkpoints/ZINC250k/test/
-data/
+data/*
+!data/*.py
+!data/*.json
 dataset/
 checkpoints/
 results/
