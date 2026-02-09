@@ -153,8 +153,13 @@ def generate_molecules_with_uncertainty(
         smiles_list: List of generated SMILES
         uncertainties: Array of uncertainties for each molecule
     """
-    # Use CUDA for ChemNet if available (pass string, not torch.device)
-    chemnet_device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    # Prefer CUDA/MPS for ChemNet if available (pass string, not torch.device)
+    if torch.cuda.is_available():
+        chemnet_device = 'cuda'
+    elif torch.backends.mps.is_available():
+        chemnet_device = 'mps'
+    else:
+        chemnet_device = 'cpu'
     encoder = ChemNetSemanticEncoder(device=chemnet_device)
 
     all_smiles = []
@@ -489,7 +494,12 @@ def main():
 
     os.makedirs(args.output_dir, exist_ok=True)
 
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    if torch.cuda.is_available():
+        device = torch.device('cuda')
+    elif torch.backends.mps.is_available():
+        device = torch.device('mps')
+    else:
+        device = torch.device('cpu')
     print(f"Device: {device}")
 
     # Load models

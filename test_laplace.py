@@ -39,7 +39,12 @@ def test_laplace_scorenetwork_x():
     print("Testing Laplace on ScoreNetworkX")
     print("="*60)
 
-    device = torch.device('mps' if torch.backends.mps.is_available() else 'cpu')
+    if torch.cuda.is_available():
+        device = torch.device('cuda')
+    elif torch.backends.mps.is_available():
+        device = torch.device('mps')
+    else:
+        device = torch.device('cpu')
     print(f"Device: {device}")
 
     # Create small model
@@ -133,7 +138,12 @@ def test_laplace_scorenetwork_a():
     print("Testing Laplace on ScoreNetworkA")
     print("="*60)
 
-    device = torch.device('mps' if torch.backends.mps.is_available() else 'cpu')
+    if torch.cuda.is_available():
+        device = torch.device('cuda')
+    elif torch.backends.mps.is_available():
+        device = torch.device('mps')
+    else:
+        device = torch.device('cpu')
     print(f"Device: {device}")
 
     # Create small model
@@ -207,7 +217,12 @@ def test_with_pretrained_checkpoint():
         print("Skipping pretrained checkpoint test")
         return True
 
-    device = torch.device('mps' if torch.backends.mps.is_available() else 'cpu')
+    if torch.cuda.is_available():
+        device = torch.device('cuda')
+    elif torch.backends.mps.is_available():
+        device = torch.device('mps')
+    else:
+        device = torch.device('cpu')
     print(f"Device: {device}")
     print(f"Loading checkpoint: {ckpt_path}")
 

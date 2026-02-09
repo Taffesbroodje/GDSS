@@ -38,6 +38,8 @@ def load_device(gpu):
     if use_cuda:
         torch.cuda.set_device(gpu)
         device = f'cuda:{gpu}'
+    elif torch.backends.mps.is_available():
+        device = 'mps'
     else:
         device = 'cpu'
     return device
@@ -139,6 +141,5 @@ def save_gen_list(gen_list, exp_name):
             pickle.dump(obj=gen_list, file=f, protocol=pickle.HIGHEST_PROTOCOL)
     save_dir = './toy/samples/{}.pkl'.format(exp_name)
     return save_dir
-
 
 

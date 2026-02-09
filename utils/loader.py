@@ -29,6 +29,8 @@ def load_seed(seed):
 def load_device():
     if torch.cuda.is_available():
         device = list(range(torch.cuda.device_count()))
+    elif torch.backends.mps.is_available():
+        device = 'mps'
     else:
         device = 'cpu'
     return device
