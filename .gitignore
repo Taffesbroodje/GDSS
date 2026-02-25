@@ -18,9 +18,12 @@ data/*
 dataset/
 checkpoints/
 results/
+results_*/
 evaluation/
 DIFF-UQ/
 *.pdf
+outputs/
+ZINC250k/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
