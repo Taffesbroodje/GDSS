@@ -38,12 +38,12 @@ from utils.mol_utils import gen_mol, mols_to_smiles, load_smiles, canonicalize_s
 from laplace_gdss_full import (
     create_laplace_models,
     fit_laplace_models,
-    uncertainty_aware_sampling,
 )
+from solver import get_pc_sampler
 from chemnet_semantic_uncertainty import (
     ChemNetSemanticEncoder,
     mol_semantic_vector,
-    semantic_uncertainty_trace,
+    semantic_uncertainty_entropy,
 )
 
 
@@ -140,14 +140,17 @@ def generate_molecules_with_uncertainty(
     init_flags_all,
     config,
     n_molecules: int,
-    n_steps: int,
     n_posterior: int,
     batch_size: int,
     device: str,
     dataset: str,
+    correct: bool = True,
 ) -> Tuple[List[str], np.ndarray]:
     """
     Generate molecules and compute per-molecule uncertainty.
+
+    Uses the proper GDSS Predictor-Corrector sampler (Reverse + Langevin)
+    with 1000 diffusion steps (from SDE config) for high-quality generation.
 
     Returns:
         smiles_list: List of generated SMILES
@@ -162,29 +165,41 @@ def generate_molecules_with_uncertainty(
         chemnet_device = 'cpu'
     encoder = ChemNetSemanticEncoder(device=chemnet_device)
 
+    max_node_num = config.data.max_node_num
+    shape_x = (batch_size, max_node_num, config.data.max_feat_num)
+    shape_adj = (batch_size, max_node_num, max_node_num)
+
+    # Create proper GDSS PC sampler (Reverse + Langevin, 1000 steps from sde.N)
+    device_str = str(device) if isinstance(device, torch.device) else device
+    sampling_fn = get_pc_sampler(
+        sde_x=sde_x, sde_adj=sde_adj,
+        shape_x=shape_x, shape_adj=shape_adj,
+        predictor='Reverse', corrector='Langevin',
+        snr=0.2, scale_eps=0.9, n_steps=1,
+        continuous=True, denoise=True, eps=1e-4,
+        device=device_str,
+    )
+
     all_smiles = []
     all_uncertainties = []
 
     n_batches = (n_molecules + batch_size - 1) // batch_size
 
-    print(f"\nGenerating {n_molecules} molecules in {n_batches} batches...")
+    print(f"\nGenerating {n_molecules} molecules in {n_batches} batches "
+          f"(PC sampler, {sde_adj.N} diffusion steps)...")
 
     for batch_idx in range(n_batches):
-        start_idx = batch_idx * batch_size
-        end_idx = min((batch_idx + 1) * batch_size, n_molecules)
-        current_batch_size = end_idx - start_idx
+        # Always use full batch_size (PC sampler has fixed shapes); trim at the end
+        n_keep = min(batch_size, n_molecules - batch_idx * batch_size)
 
-        print(f"  Batch {batch_idx + 1}/{n_batches} ({current_batch_size} molecules)")
+        print(f"\n  Batch {batch_idx + 1}/{n_batches} ({n_keep} molecules)")
 
-        # Get init flags for this batch
-        init_flags_batch = init_flags_all[:current_batch_size].to(device)
-
-        shape_x = (current_batch_size, config.data.max_node_num, config.data.max_feat_num)
-        shape_adj = (current_batch_size, config.data.max_node_num, config.data.max_node_num)
+        # Get init flags — always full batch_size for PC sampler shape compatibility
+        init_flags_batch = init_flags_all[:batch_size].to(device)
 
         # CRITICAL: Generate FIXED noise for this batch (Jazbec et al. Algorithm 1)
         # All posterior samples will use the SAME noise z
-        torch.manual_seed(batch_idx * 1000 + 42)  # Different seed per batch, but fixed within batch
+        torch.manual_seed(batch_idx * 1000 + 42)
         fixed_noise_x = sde_x.prior_sampling(shape_x)
         fixed_noise_adj = sde_adj.prior_sampling_sym(shape_adj)
 
@@ -193,73 +208,51 @@ def generate_molecules_with_uncertainty(
         theta_a_map = laplace_adj._get_param_vector().clone()
 
         # Generate with MAP parameters first using FIXED noise
-        laplace_x.fitted = False
-        laplace_adj.fitted = False
-
-        x_gen, adj_gen, _ = uncertainty_aware_sampling(
-            model_x, model_adj,
-            laplace_x, laplace_adj,
-            sde_x, sde_adj,
-            init_flags_batch,
-            shape_x, shape_adj,
-            n_steps=n_steps,
-            n_uncertainty_samples=0,
-            device=device,
-            fixed_noise_x=fixed_noise_x,
-            fixed_noise_adj=fixed_noise_adj,
+        print(f"    MAP sample...")
+        x_gen, adj_gen, _ = sampling_fn(
+            model_x, model_adj, init_flags_batch,
+            fixed_noise_x=fixed_noise_x, fixed_noise_adj=fixed_noise_adj,
         )
 
-        laplace_x.fitted = True
-        laplace_adj.fitted = True
-
-        # Get MAP embeddings
-        map_embeddings, map_smiles = mol_semantic_vector(x_gen, adj_gen, dataset, encoder)
+        # Get MAP embeddings (only for n_keep molecules)
+        map_embeddings, map_smiles = mol_semantic_vector(
+            x_gen[:n_keep], adj_gen[:n_keep], dataset, encoder, correct=correct
+        )
 
         # Compute uncertainty via posterior sampling with FIXED noise z
         posterior_embeddings = [map_embeddings]
 
         for p_idx in range(n_posterior):
-            # Sample posterior parameters θm ~ q(θ|D)
+            # Sample posterior parameters from Laplace posterior
             theta_x = laplace_x.sample_parameters(1)[0]
             theta_a = laplace_adj.sample_parameters(1)[0]
 
             laplace_x._set_param_vector(theta_x)
             laplace_adj._set_param_vector(theta_a)
 
-            laplace_x.fitted = False
-            laplace_adj.fitted = False
-
             # Generate with FIXED noise z (same for all posterior samples!)
-            x_gen_p, adj_gen_p, _ = uncertainty_aware_sampling(
-                model_x, model_adj,
-                laplace_x, laplace_adj,
-                sde_x, sde_adj,
-                init_flags_batch,
-                shape_x, shape_adj,
-                n_steps=n_steps,
-                n_uncertainty_samples=0,
-                device=device,
-                fixed_noise_x=fixed_noise_x,  # FIXED noise!
-                fixed_noise_adj=fixed_noise_adj,  # FIXED noise!
+            print(f"    Posterior sample {p_idx + 1}/{n_posterior}...")
+            x_gen_p, adj_gen_p, _ = sampling_fn(
+                model_x, model_adj, init_flags_batch,
+                fixed_noise_x=fixed_noise_x, fixed_noise_adj=fixed_noise_adj,
             )
 
-            laplace_x.fitted = True
-            laplace_adj.fitted = True
-
-            embeddings_p, _ = mol_semantic_vector(x_gen_p, adj_gen_p, dataset, encoder)
+            embeddings_p, _ = mol_semantic_vector(
+                x_gen_p[:n_keep], adj_gen_p[:n_keep], dataset, encoder, correct=correct
+            )
             posterior_embeddings.append(embeddings_p)
 
         # Restore MAP parameters
         laplace_x._set_param_vector(theta_x_map)
         laplace_adj._set_param_vector(theta_a_map)
 
-        # Compute per-molecule uncertainty
-        posterior_embeddings = np.stack(posterior_embeddings, axis=0)  # [M+1, B, 512]
+        # Compute per-molecule uncertainty using entropy (Jazbec Eq. 8)
+        posterior_embeddings = np.stack(posterior_embeddings, axis=0)  # [M+1, n_keep, 512]
 
         batch_uncertainties = []
-        for mol_idx in range(current_batch_size):
+        for mol_idx in range(n_keep):
             emb = posterior_embeddings[:, mol_idx, :]  # [M+1, 512]
-            u = semantic_uncertainty_trace(emb)
+            u = semantic_uncertainty_entropy(emb)
             batch_uncertainties.append(u)
 
         all_smiles.extend(map_smiles)
@@ -470,13 +463,13 @@ def main():
                         help='Total number of molecules to generate')
     parser.add_argument('--batch_size', type=int, default=32,
                         help='Batch size for generation')
-    parser.add_argument('--n_steps', type=int, default=100,
-                        help='Number of diffusion steps')
     parser.add_argument('--n_posterior', type=int, default=10,
                         help='Number of posterior samples for uncertainty')
     parser.add_argument('--num_fit_batches', type=int, default=10,
                         help='Number of batches for Fisher fitting')
     parser.add_argument('--prior_precision', type=float, default=1.0)
+    parser.add_argument('--no_correction', action='store_true',
+                        help='Disable valency correction to test raw model quality')
     parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--output_dir', type=str, default='./results')
     parser.add_argument('--load_laplace', type=str, default=None,
@@ -583,11 +576,11 @@ def main():
         init_flags_all,
         config,
         n_molecules=args.n_molecules,
-        n_steps=args.n_steps,
         n_posterior=args.n_posterior,
         batch_size=args.batch_size,
         device=device,
         dataset=args.dataset,
+        correct=not args.no_correction,
     )
     gen_time = time.time() - start_time
     print(f"\nGeneration time: {gen_time:.1f}s")
