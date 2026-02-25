@@ -47,7 +47,7 @@ def load_smiles(dataset='QM9'):
     return list(df[col].loc[train_idx]), list(df[col].loc[test_idx])
 
 
-def gen_mol(x, adj, dataset, largest_connected_comp=True):    
+def gen_mol(x, adj, dataset, largest_connected_comp=True, correct=True):
     # x: 32, 9, 5; adj: 32, 4, 9, 9
     x = x.detach().cpu().numpy()
     adj = adj.detach().cpu().numpy()
@@ -60,16 +60,19 @@ def gen_mol(x, adj, dataset, largest_connected_comp=True):
     # mols_wo_correction = [mol for mol in mols_wo_correction if mol is not None]
     mols, num_no_correct = [], 0
     for x_elem, adj_elem in zip(x, adj):
-        mol = construct_mol(x_elem, adj_elem, atomic_num_list)
-        cmol, no_correct = correct_mol(mol)
-        if no_correct: num_no_correct += 1
+        mol = construct_mol(x_elem, adj_elem, atomic_num_list, check_val=correct)
+        if correct:
+            cmol, no_correct = correct_mol(mol)
+            if no_correct: num_no_correct += 1
+        else:
+            cmol = mol
         vcmol = valid_mol_can_with_seg(cmol, largest_connected_comp=largest_connected_comp)
         mols.append(vcmol)
     mols = [mol for mol in mols if mol is not None]
     return mols, num_no_correct
 
 
-def construct_mol(x, adj, atomic_num_list): # x: 9, 5; adj: 4, 9, 9
+def construct_mol(x, adj, atomic_num_list, check_val=True): # x: 9, 5; adj: 4, 9, 9
     mol = Chem.RWMol()
 
     atoms = np.argmax(x, axis=1)
@@ -86,6 +89,8 @@ def construct_mol(x, adj, atomic_num_list): # x: 9, 5; adj: 4, 9, 9
     for start, end in zip(*np.nonzero(adj)):
         if start > end:
             mol.AddBond(int(start), int(end), bond_decoder[adj[start, end]])
+            if not check_val:
+                continue
             # add formal charge to atom: e.g. [O+], [N+], [S+]
             # not support [O-], [N-], [S-], [NH+] etc.
             flag, atomid_valence = check_valency(mol)
