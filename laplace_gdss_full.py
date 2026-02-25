@@ -207,8 +207,10 @@ class GDSSLaplaceFull:
 
             pbar.set_postfix({'loss': total_loss / n_data})
 
-        # Normalize by number of data points
-        self.H = self.H / n_data
+        # NOTE: Do NOT normalize by n_data. The Bayesian posterior precision is:
+        #   posterior_precision = sum_i Fisher_i + prior_precision
+        # Dividing by n_data would turn this into an average, making the prior
+        # dominate and producing an overly diffuse posterior.
 
         self.fitted = True
         fit_time = time.time() - start_time
@@ -340,7 +342,7 @@ class GDSSLaplaceFull:
 
     def load(self, path):
         """Load fitted Laplace state."""
-        state = torch.load(path, map_location=next(self.model.parameters()).device)
+        state = torch.load(path, map_location=next(self.model.parameters()).device, weights_only=False)
         self.mean = state['mean']
         self.H = state['H']
         self.prior_precision = state['prior_precision']
@@ -349,7 +351,7 @@ class GDSSLaplaceFull:
         print(f"[GDSSLaplace] Loaded from {path}")
 
 
-def create_laplace_models(model_x, model_adj, prior_precision=1.0):
+def create_laplace_models(model_x, model_adj, prior_precision=1.0, last_layer_name='final.linears.2'):
     """
     Create Laplace wrappers for both GDSS score networks.
 
@@ -360,12 +362,14 @@ def create_laplace_models(model_x, model_adj, prior_precision=1.0):
     laplace_x = GDSSLaplaceFull(
         model=model_x,
         model_type='x',
+        last_layer_name=last_layer_name,
         prior_precision=prior_precision,
     )
 
     laplace_adj = GDSSLaplaceFull(
         model=model_adj,
         model_type='adj',
+        last_layer_name=last_layer_name,
         prior_precision=prior_precision,
     )
 
