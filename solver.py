@@ -155,12 +155,12 @@ def get_pc_sampler(sde_x, sde_adj, shape_x, shape_adj, predictor='Euler', correc
                    probability_flow=False, continuous=False,
                    denoise=True, eps=1e-3, device='cuda'):
 
-  def pc_sampler(model_x, model_adj, init_flags):
+  def pc_sampler(model_x, model_adj, init_flags, fixed_noise_x=None, fixed_noise_adj=None):
 
     score_fn_x = get_score_fn(sde_x, model_x, train=False, continuous=continuous)
     score_fn_adj = get_score_fn(sde_adj, model_adj, train=False, continuous=continuous)
 
-    predictor_fn = ReverseDiffusionPredictor if predictor=='Reverse' else EulerMaruyamaPredictor 
+    predictor_fn = ReverseDiffusionPredictor if predictor=='Reverse' else EulerMaruyamaPredictor
     corrector_fn = LangevinCorrector if corrector=='Langevin' else NoneCorrector
 
     predictor_obj_x = predictor_fn('x', sde_x, score_fn_x, probability_flow)
@@ -171,8 +171,8 @@ def get_pc_sampler(sde_x, sde_adj, shape_x, shape_adj, predictor='Euler', correc
 
     with torch.no_grad():
       # -------- Initial sample --------
-      x = sde_x.prior_sampling(shape_x).to(device) 
-      adj = sde_adj.prior_sampling_sym(shape_adj).to(device) 
+      x = fixed_noise_x.to(device) if fixed_noise_x is not None else sde_x.prior_sampling(shape_x).to(device)
+      adj = fixed_noise_adj.to(device) if fixed_noise_adj is not None else sde_adj.prior_sampling_sym(shape_adj).to(device) 
       flags = init_flags
       x = mask_x(x, flags)
       adj = mask_adjs(adj, flags)

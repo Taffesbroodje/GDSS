@@ -17,3 +17,4 @@ sample:
   probability_flow: False
   eps: 1.0e-4
   seed: 42
+  batch_size: 2000

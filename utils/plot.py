@@ -6,7 +6,7 @@ import matplotlib
 import matplotlib.pyplot as plt
 import pickle
 import warnings
-warnings.filterwarnings("ignore", category=matplotlib.cbook.MatplotlibDeprecationWarning)
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 options = {

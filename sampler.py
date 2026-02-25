@@ -57,12 +57,15 @@ class Sampler(object):
         logger.log(f'GEN SEED: {self.config.sample.seed}')
         load_seed(self.config.sample.seed)
 
-        num_sampling_rounds = math.ceil(len(self.test_graph_list) / self.configt.data.batch_size)
+        # Use sample config batch_size if provided, otherwise use model config
+        batch_size = getattr(self.config.sample, 'batch_size', self.configt.data.batch_size)
+        self.configt.data.batch_size = batch_size  # Override for init_flags
+        num_sampling_rounds = math.ceil(len(self.test_graph_list) / batch_size)
         gen_graph_list = []
         for r in range(num_sampling_rounds):
             t_start = time.time()
 
-            self.init_flags = init_flags(self.train_graph_list, self.configt).to(self.device[0])
+            self.init_flags = init_flags(self.train_graph_list, self.configt, batch_size=batch_size).to(self.device[0])
 
             x, adj, _ = self.sampling_fn(self.model_x, self.model_adj, self.init_flags)
 
@@ -111,8 +114,10 @@ class Sampler_mol(object):
         # -------- Load models --------
         self.model_x = load_model_from_ckpt(self.ckpt_dict['params_x'], self.ckpt_dict['x_state_dict'], self.device)
         self.model_adj = load_model_from_ckpt(self.ckpt_dict['params_adj'], self.ckpt_dict['adj_state_dict'], self.device)
-        
-        self.sampling_fn = load_sampling_fn(self.configt, self.config.sampler, self.config.sample, self.device)
+
+        batch_size = self.config.sample.batch_size
+        self.sampling_fn = load_sampling_fn(self.configt, self.config.sampler, self.config.sample, self.device,
+                                            batch_size=batch_size)
 
         # -------- Generate samples --------
         logger.log(f'GEN SEED: {self.config.sample.seed}')
@@ -125,9 +130,20 @@ class Sampler_mol(object):
         with open(f'data/{self.configt.data.data.lower()}_test_nx.pkl', 'rb') as f:
             self.test_graph_list = pickle.load(f)                                   # for NSPDK MMD
 
-        self.init_flags = init_flags(self.train_graph_list, self.configt, 10000).to(self.device[0])
-        x, adj, _ = self.sampling_fn(self.model_x, self.model_adj, self.init_flags)
-        
+        num_total = 10000
+        batch_size = self.config.sample.batch_size
+        num_rounds = math.ceil(num_total / batch_size)
+        x_list = []
+        adj_list = []
+        for r in range(num_rounds):
+            flags = init_flags(self.train_graph_list, self.configt, batch_size).to(self.device[0])
+            x_b, adj_b, _ = self.sampling_fn(self.model_x, self.model_adj, flags)
+            x_list.append(x_b.cpu())
+            adj_list.append(adj_b.cpu())
+            logger.log(f"Round {r+1}/{num_rounds} : generated {batch_size} molecules")
+        x = torch.cat(x_list, dim=0)[:num_total]
+        adj = torch.cat(adj_list, dim=0)[:num_total]
+
         samples_int = quantize_mol(adj)
 
         samples_int = samples_int - 1
