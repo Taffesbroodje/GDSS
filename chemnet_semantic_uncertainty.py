@@ -118,6 +118,7 @@ def mol_semantic_vector(
     adj: torch.Tensor,
     dataset: str,
     encoder: ChemNetSemanticEncoder,
+    correct: bool = True,
 ) -> Tuple[np.ndarray, List[str]]:
     """
     Compute ChemNet semantic embeddings for generated molecules.
@@ -151,6 +152,8 @@ def mol_semantic_vector(
     # Convert bond types: 0,1,2,3 -> 3,0,1,2 (no bond becomes channel 3)
     samples_int = samples_int - 1
     samples_int[samples_int == -1] = 3
+    # Clamp to valid range in case of unexpected values from posterior samples
+    samples_int = np.clip(samples_int, 0, 3)
 
     # One-hot encode adjacency: [B,N,N] -> [B,4,N,N]
     adj_4ch = torch.nn.functional.one_hot(
@@ -164,7 +167,7 @@ def mol_semantic_vector(
     x_with_virtual = torch.cat([x_binary, virtual_feat], dim=-1)
 
     # Generate molecules
-    mols, _ = gen_mol(x_with_virtual, adj_4ch, dataset, largest_connected_comp=True)
+    mols, _ = gen_mol(x_with_virtual, adj_4ch, dataset, largest_connected_comp=True, correct=correct)
 
     # Convert to SMILES
     smiles_list = []
@@ -195,6 +198,9 @@ def semantic_uncertainty_trace(embeddings: np.ndarray) -> float:
     This is the total variance across all embedding dimensions,
     following Jazbec et al. (2025).
 
+    Zero embeddings (from invalid molecules) are included in the calculation —
+    they naturally increase variance, which is the correct uncertainty signal.
+
     Parameters
     ----------
     embeddings : np.ndarray, shape [M, D]
@@ -205,17 +211,19 @@ def semantic_uncertainty_trace(embeddings: np.ndarray) -> float:
     uncertainty : float
         Trace of covariance matrix (sum of variances)
     """
-    if embeddings.shape[0] < 2:
+    M, D = embeddings.shape
+    if M < 2:
         return 0.0
 
-    # Filter out zero embeddings (invalid molecules)
     valid_mask = np.any(embeddings != 0, axis=1)
-    valid_embeddings = embeddings[valid_mask]
+    n_valid = valid_mask.sum()
 
-    if valid_embeddings.shape[0] < 2:
-        return float('inf')  # High uncertainty if most samples invalid
+    if n_valid == 0:
+        # All invalid — return large finite penalty
+        return float(D * 100.0)
 
-    centered = valid_embeddings - valid_embeddings.mean(axis=0, keepdims=True)
+    # Include ALL embeddings (zeros for invalid molecules increase variance)
+    centered = embeddings - embeddings.mean(axis=0, keepdims=True)
     cov = np.cov(centered, rowvar=False)
     return float(np.trace(cov))
 
@@ -233,6 +241,10 @@ def semantic_uncertainty_entropy(
 
     H(p) = 0.5 * D * (1 + log(2π)) + 0.5 * sum(log(σ²_i + σ²_obs))
 
+    Zero embeddings (from invalid molecules) are included in the calculation —
+    they naturally increase variance, which is the correct uncertainty signal.
+    Only if ALL M samples are zero (all invalid): return a large finite penalty.
+
     Parameters
     ----------
     embeddings : np.ndarray, shape [M, D]
@@ -245,22 +257,20 @@ def semantic_uncertainty_entropy(
     entropy : float
         Entropy of the Gaussian approximation
     """
-    if embeddings.shape[0] < 2:
+    M, D = embeddings.shape
+    if M < 2:
         return 0.0
 
-    # Filter out zero embeddings (invalid molecules)
     valid_mask = np.any(embeddings != 0, axis=1)
-    valid_embeddings = embeddings[valid_mask]
+    n_valid = valid_mask.sum()
 
-    if valid_embeddings.shape[0] < 2:
-        return float('inf')
+    if n_valid == 0:
+        # All invalid — assign max penalty (large finite value)
+        max_var = 100.0
+        return float(0.5 * D * (1 + np.log(2 * np.pi)) + 0.5 * D * np.log(max_var))
 
-    D = valid_embeddings.shape[1]
-
-    # Compute variance along each dimension
-    var = np.var(valid_embeddings, axis=0)
-
-    # Add observation noise
+    # Include ALL embeddings (zeros for invalid molecules increase variance)
+    var = np.var(embeddings, axis=0)
     var_with_noise = var + sigma_squared
 
     # Compute entropy of diagonal Gaussian
